@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: submission-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  REDIS_ADDR: "redis:{{ .Values.redis.port }}"
+  UPLOAD_DIR: {{ .Values.submissionService.uploadDir }}
+  MAX_UPLOAD_SIZE_MB: {{ .Values.submissionService.maxUploadSizeMB | quote }}
+  SANDBOX_CPU_LIMIT: {{ .Values.submissionService.sandboxCPULimit | quote }}
+  SANDBOX_MEMORY_LIMIT: {{ .Values.submissionService.sandboxMemoryLimit | quote }}
+  SANDBOX_TTL_SECONDS: {{ .Values.submissionService.sandboxTTLSeconds | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: submission-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.submissionService.replicas }}
+  selector:
+    matchLabels:
+      app: submission-service
+  template:
+    metadata:
+      labels:
+        app: submission-service
+    spec:
+      serviceAccountName: submission-service
+      containers:
+      - name: submission-service
+        image: {{ .Values.submissionService.image }}:{{ .Values.global.imageTag }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - containerPort: {{ .Values.submissionService.port }}
+        envFrom:
+        - configMapRef:
+            name: submission-config
+        env:
+        - name: REGISTRY_ADDRESS
+          value: {{ .Values.submissionService.registryAddress }}
+        - name: REGISTRY_MIRROR
+          value: {{ .Values.submissionService.registryMirror }}
+        - name: BOT_FLEET_IMAGE_TAG
+          value: {{ .Values.global.imageTag }}
+        resources:
+          limits:
+            cpu: {{ .Values.submissionService.resources.limits.cpu }}
+            memory: {{ .Values.submissionService.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.submissionService.resources.requests.cpu }}
+            memory: {{ .Values.submissionService.resources.requests.memory }}
+        volumeMounts:
+        - name: submissions-storage
+          mountPath: /tmp/submissions
+      volumes:
+      - name: submissions-storage
+        persistentVolumeClaim:
+          claimName: submissions-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: submission-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: submission-service
+  ports:
+  - port: {{ .Values.submissionService.port }}
+    targetPort: {{ .Values.submissionService.port }}
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: submissions-pvc
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

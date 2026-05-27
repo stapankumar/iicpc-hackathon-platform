@@ -1,0 +1,20 @@
+syntax = "proto3";
+package telemetry;
+
+// Metric published by bot fleet to Redis Streams
+message OrderMetric {
+  string submission_id = 1;
+  double latency_ms    = 2;
+  int64  timestamp     = 3;
+  string status        = 4; // ACK or REJECT
+}
+
+// Score computed by telemetry service
+message Score {
+  string submission_id = 1;
+  double p50_ms        = 2;
+  double p90_ms        = 3;
+  double p99_ms        = 4;
+  double tps           = 5;
+  double score         = 6;
+}

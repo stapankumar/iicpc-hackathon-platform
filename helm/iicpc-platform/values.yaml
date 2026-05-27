@@ -1,0 +1,89 @@
+# Global settings
+global:
+  namespace: iicpc
+  imageTag: latest
+  imagePullPolicy: Never    # use local images in minikube
+
+# Redis
+redis:
+  replicas: 1
+  image: redis:7.0
+  port: 6379
+  storage: 1Gi
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+# Submission Service
+submissionService:
+  replicas: 1
+  image: submission-service
+  port: 8081
+  uploadDir: "/tmp/submissions"
+  maxUploadSizeMB: "50"
+  sandboxCPULimit: "2"
+  sandboxMemoryLimit: "512Mi"
+  sandboxTTLSeconds: "300"
+  registryAddress: "registry.kube-system.svc.cluster.local:80"
+  registryMirror: "registry.kube-system.svc.cluster.local:80"
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+# Bot Fleet
+botFleet:
+  image: bot-fleet
+  numBots: "500"
+  ordersPerBot: "100"
+  resources:
+    limits:
+      cpu: "2"
+      memory: "512Mi"
+    requests:
+      cpu: "500m"
+      memory: "256Mi"
+
+# Telemetry Service
+telemetryService:
+  replicas: 1
+  image: telemetry-service
+  port: 8083
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+# Leaderboard Service
+leaderboardService:
+  replicas: 1
+  image: leaderboard-service
+  port: 8082
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+# Sandbox constraints
+sandbox:
+  cpuLimit: "2"
+  memoryLimit: "512Mi"
+  ttlSeconds: 300
+  maxConcurrentJobs: 50
+
+# Ingress
+ingress:
+  host: iicpc.local

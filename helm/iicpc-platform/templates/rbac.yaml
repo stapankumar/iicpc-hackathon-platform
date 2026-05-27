@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: submission-service
+  namespace: {{ .Values.global.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: submission-service-role
+  namespace: {{ .Values.global.namespace }}
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "watch", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["create", "get", "watch", "delete", "list"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: submission-service-rolebinding
+  namespace: {{ .Values.global.namespace }}
+subjects:
+- kind: ServiceAccount
+  name: submission-service
+  namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  name: submission-service-role
+  apiGroup: rbac.authorization.k8s.io

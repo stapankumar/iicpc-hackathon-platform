@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota
+  namespace: {{ .Values.global.namespace }}
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: "5Gi"
+    limits.cpu: "20"
+    limits.memory: "10Gi"
+    count/jobs.batch: {{ .Values.sandbox.maxConcurrentJobs | quote }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-isolation
+  namespace: {{ .Values.global.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: sandbox
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bot-fleet
+    ports:
+    - port: 8080
+  egress: []

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaderboard-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.leaderboardService.replicas }}
+  selector:
+    matchLabels:
+      app: leaderboard-service
+  template:
+    metadata:
+      labels:
+        app: leaderboard-service
+    spec:
+      containers:
+      - name: leaderboard-service
+        image: {{ .Values.leaderboardService.image }}:{{ .Values.global.imageTag }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        env:
+        - name: REDIS_ADDR
+          value: "redis:{{ .Values.redis.port }}"
+        resources:
+          limits:
+            cpu: {{ .Values.leaderboardService.resources.limits.cpu }}
+            memory: {{ .Values.leaderboardService.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.leaderboardService.resources.requests.cpu }}
+            memory: {{ .Values.leaderboardService.resources.requests.memory }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: leaderboard-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: leaderboard-service
+  ports:
+  - port: {{ .Values.leaderboardService.port }}
+    targetPort: {{ .Values.leaderboardService.port }}
+  type: NodePort

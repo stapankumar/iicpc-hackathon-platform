@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota
+  namespace: iicpc
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: "5Gi"
+    limits.cpu: "20"
+    limits.memory: "10Gi"
+    count/jobs.batch: "50"   # max 50 concurrent sandbox jobs

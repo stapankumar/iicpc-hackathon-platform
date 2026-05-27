@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: submission-config
+  namespace: iicpc
+data:
+  REDIS_ADDR: "redis:6379"
+  UPLOAD_DIR: "/tmp/submissions"
+  MAX_UPLOAD_SIZE_MB: "50"
+  SANDBOX_CPU_LIMIT: "2"
+  SANDBOX_MEMORY_LIMIT: "512Mi"
+  SANDBOX_TTL_SECONDS: "300"

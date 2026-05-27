@@ -1,0 +1,15 @@
+apiVersion: v2
+name: iicpc-platform
+description: Distributed Benchmarking and Hosting Platform for evaluating contestant orderbook implementations
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - iicpc
+  - benchmarking
+  - orderbook
+  - hft
+  - kubernetes
+maintainers:
+  - name: IICPC Team
+    email: iicpc@hackathon.com

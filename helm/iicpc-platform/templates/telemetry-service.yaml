@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.telemetryService.replicas }}
+  selector:
+    matchLabels:
+      app: telemetry-service
+  template:
+    metadata:
+      labels:
+        app: telemetry-service
+    spec:
+      containers:
+      - name: telemetry-service
+        image: {{ .Values.telemetryService.image }}:{{ .Values.global.imageTag }}
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        env:
+        - name: REDIS_ADDR
+          value: "redis:{{ .Values.redis.port }}"
+        resources:
+          limits:
+            cpu: {{ .Values.telemetryService.resources.limits.cpu }}
+            memory: {{ .Values.telemetryService.resources.limits.memory }}
+          requests:
+            cpu: {{ .Values.telemetryService.resources.requests.cpu }}
+            memory: {{ .Values.telemetryService.resources.requests.memory }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry-service
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: telemetry-service
+  ports:
+  - port: {{ .Values.telemetryService.port }}
+    targetPort: {{ .Values.telemetryService.port }}
+  type: ClusterIP

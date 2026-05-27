@@ -1,0 +1,31 @@
+# This is triggered by submission-service after sandbox is ready
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bot-fleet-job
+  namespace: iicpc
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: bot-fleet
+        image: bot-fleet:latest
+        imagePullPolicy: Never
+        env:
+        - name: TARGET_URL
+          value: "http://sandbox-service:8080"
+        - name: NUM_BOTS
+          value: "500"
+        - name: ORDERS_PER_BOT
+          value: "100"
+        - name: REDIS_ADDR
+          value: "redis:6379"
+        resources:
+          limits:
+            cpu: "2"
+            memory: "512Mi"
+          requests:
+            cpu: "500m"
+            memory: "256Mi"

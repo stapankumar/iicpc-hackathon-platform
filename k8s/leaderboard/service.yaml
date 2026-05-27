@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: leaderboard-service
+  namespace: iicpc
+spec:
+  selector:
+    app: leaderboard-service
+  ports:
+  - port: 8082
+    targetPort: 8082
+  type: NodePort        # exposed outside cluster for frontend
