@@ -7,19 +7,21 @@ interface Score {
   p90_ms: number
   p99_ms: number
   tps: number
+  correctness: number
   score: number
 }
 
 export default function Leaderboard() {
-  const [scores, setScores] = useState<Score[]>([])
+  const [scores, setScores]       = useState<Score[]>([])
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    // SSE connection to leaderboard service
-    const es = new EventSource(`${import.meta.env.VITE_LEADERBOARD_URL || 'http://iicpc.local'}/ws`)
+    const es = new EventSource(
+      `${import.meta.env.VITE_LEADERBOARD_URL || 'http://iicpc.local'}/ws`
+    )
 
-    es.onopen = () => setConnected(true)
-
+    es.onopen    = () => setConnected(true)
+    es.onerror   = () => setConnected(false)
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
@@ -27,13 +29,12 @@ export default function Leaderboard() {
       } catch {}
     }
 
-    es.onerror = () => setConnected(false)
-
     return () => es.close()
   }, [])
 
   return (
     <div className="space-y-8">
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Live Leaderboard</h1>
@@ -50,8 +51,11 @@ export default function Leaderboard() {
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={scores}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="submission_id" tick={{ fontSize: 10, fill: '#9CA3AF' }}
-                tickFormatter={(v) => v.slice(0, 8)} />
+              <XAxis
+                dataKey="submission_id"
+                tick={false}
+                axisLine={{ stroke: '#374151' }}
+              />
               <YAxis tick={{ fill: '#9CA3AF' }} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
@@ -76,39 +80,60 @@ export default function Leaderboard() {
               <th className="px-6 py-3 text-right">p90 (ms)</th>
               <th className="px-6 py-3 text-right">p99 (ms)</th>
               <th className="px-6 py-3 text-right">TPS</th>
+              <th className="px-6 py-3 text-right">Correctness</th>
               <th className="px-6 py-3 text-right">Score</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
             {scores.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                   No submissions yet. Be the first to submit!
                 </td>
               </tr>
             ) : (
               scores.map((s, i) => (
-                <tr key={s.submission_id}
-                  className="hover:bg-gray-800 transition-colors">
+                <tr key={s.submission_id} className="hover:bg-gray-800 transition-colors">
+
+                  {/* Rank */}
                   <td className="px-6 py-4">
                     <span className={`font-bold text-lg ${
                       i === 0 ? 'text-yellow-400' :
-                      i === 1 ? 'text-gray-300' :
-                      i === 2 ? 'text-amber-600' : 'text-gray-500'
+                      i === 1 ? 'text-gray-300'   :
+                      i === 2 ? 'text-amber-600'  : 'text-gray-500'
                     }`}>#{i + 1}</span>
                   </td>
+
+                  {/* Submission ID */}
                   <td className="px-6 py-4 font-mono text-green-400">
                     {s.submission_id.slice(0, 12)}...
                   </td>
+
+                  {/* Latencies */}
                   <td className="px-6 py-4 text-right text-green-300">{s.p50_ms.toFixed(2)}</td>
                   <td className="px-6 py-4 text-right text-yellow-300">{s.p90_ms.toFixed(2)}</td>
                   <td className="px-6 py-4 text-right text-red-300">{s.p99_ms.toFixed(2)}</td>
+
+                  {/* TPS */}
                   <td className="px-6 py-4 text-right text-blue-300">{s.tps.toLocaleString()}</td>
+
+                  {/* Correctness — color coded */}
+                  <td className="px-6 py-4 text-right">
+                    <span className={`font-mono text-sm ${
+                      s.correctness >= 0.8 ? 'text-green-400'  :
+                      s.correctness >= 0.5 ? 'text-yellow-400' : 'text-red-400'
+                    }`}>
+                      {(s.correctness * 100).toFixed(0)}%
+                    </span>
+                  </td>
+
+                  {/* Score */}
                   <td className="px-6 py-4 text-right">
                     <span className="bg-green-900 text-green-300 px-3 py-1 rounded-full font-bold">
                       {s.score.toFixed(1)}
                     </span>
                   </td>
+
                 </tr>
               ))
             )}

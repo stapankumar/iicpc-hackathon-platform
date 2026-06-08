@@ -1,36 +1,84 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+
+type UploadStatus = 'idle' | 'uploading' | 'building' | 'running' | 'scored' | 'failed' | 'error'
+
+const PIPELINE_STAGES: { key: UploadStatus; label: string }[] = [
+  { key: 'uploading', label: 'Uploading' },
+  { key: 'building',  label: 'Building image' },
+  { key: 'running',   label: 'Judging' },
+  { key: 'scored',    label: 'Scored' },
+]
+
+const STATUS_MAP: Record<string, UploadStatus> = {
+  RECEIVED: 'building',
+  BUILDING: 'building',
+  RUNNING:  'running',
+  SCORED:   'scored',
+  FAILED:   'failed',
+}
 
 export default function Upload() {
-  const [file, setFile] = useState<File | null>(null)
-  const [status, setStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
+  const [file, setFile]               = useState<File | null>(null)
+  const [status, setStatus]           = useState<UploadStatus>('idle')
   const [submissionID, setSubmissionID] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError]             = useState('')
+  const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Poll /status until SCORED or FAILED
+  useEffect(() => {
+    if (!submissionID || status === 'scored' || status === 'failed' || status === 'error') {
+      if (pollRef.current) clearInterval(pollRef.current)
+      return
+    }
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `${import.meta.env.VITE_SUBMISSION_URL || 'http://iicpc.local'}/status?submission_id=${submissionID}`
+        )
+        if (!res.ok) return
+        const data = await res.json()
+        const mapped = STATUS_MAP[data.status as string]
+        if (mapped) setStatus(mapped)
+      } catch {}
+    }, 3000)
+
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [submissionID, status])
 
   const handleSubmit = async () => {
-    if (!file) return
+    if (!file || status !== 'idle') return
 
     setStatus('uploading')
+    setError('')
+
     const formData = new FormData()
     formData.append('submission', file)
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_SUBMISSION_URL || 'http://iicpc.local'}/submit`, {
-        method: 'POST',
-        body: formData,
-      })
+      const res = await fetch(
+        `${import.meta.env.VITE_SUBMISSION_URL || 'http://iicpc.local'}/submit`,
+        { method: 'POST', body: formData }
+      )
       const data = await res.json()
       if (res.ok) {
         setSubmissionID(data.submission_id)
-        setStatus('success')
+        setStatus('building')
       } else {
         setError(data.error || 'Upload failed')
         setStatus('error')
       }
-    } catch (e) {
+    } catch {
       setError('Could not reach submission service')
       setStatus('error')
     }
   }
+
+  const isInProgress = ['uploading', 'building', 'running'].includes(status)
+  const isDone       = status === 'scored' || status === 'failed'
+  const currentStage = status === 'scored'
+  ? PIPELINE_STAGES.length  // all stages past
+  : PIPELINE_STAGES.findIndex(s => s.key === status)
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -68,14 +116,22 @@ export default function Upload() {
         <h2 className="text-lg font-semibold">Upload Submission</h2>
 
         <div
-          className="border-2 border-dashed border-gray-700 rounded-lg p-8 text-center cursor-pointer hover:border-green-500 transition-colors"
-          onClick={() => document.getElementById('fileInput')?.click()}
+          className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors
+            ${isDone || isInProgress
+              ? 'border-gray-700 cursor-not-allowed opacity-50'
+              : 'border-gray-700 cursor-pointer hover:border-green-500'
+            }`}
+          onClick={() => {
+            if (!isInProgress && !isDone)
+              document.getElementById('fileInput')?.click()
+          }}
         >
           <input
             id="fileInput"
             type="file"
             accept=".zip"
             className="hidden"
+            disabled={isInProgress || isDone}
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
           {file ? (
@@ -93,17 +149,63 @@ export default function Upload() {
 
         <button
           onClick={handleSubmit}
-          disabled={!file || status === 'uploading'}
-          className="w-full py-3 bg-green-500 hover:bg-green-400 disabled:bg-gray-700 disabled:text-gray-500 text-black font-bold rounded-lg transition-colors"
+          disabled={!file || isInProgress || isDone}
+          className="w-full py-3 bg-green-500 hover:bg-green-400 disabled:bg-gray-700
+                     disabled:text-gray-500 text-black font-bold rounded-lg transition-colors"
         >
-          {status === 'uploading' ? 'Submitting...' : 'Submit'}
+          {status === 'uploading' ? 'Uploading...' : isInProgress ? 'Judging...' : 'Submit'}
         </button>
 
-        {status === 'success' && (
-          <div className="bg-green-900 border border-green-700 rounded-lg p-4">
-            <p className="text-green-300 font-medium">Submission received!</p>
-            <p className="text-green-500 text-sm font-mono mt-1">ID: {submissionID}</p>
-            <p className="text-gray-400 text-sm mt-1">Check the leaderboard for your results.</p>
+        {/* Pipeline progress — shown after successful upload */}
+        {submissionID && (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 font-mono">ID: {submissionID}</p>
+
+            {/* Stage tracker */}
+            <div className="flex items-center gap-1">
+              {PIPELINE_STAGES.map((stage, i) => {
+                const isPast    = i < currentStage
+                const isCurrent = i === currentStage
+                const isFuture  = i > currentStage
+
+                return (
+                  <div key={stage.key} className="flex items-center gap-1 flex-1">
+                    <div className="flex flex-col items-center flex-1">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs
+                        ${isPast    ? 'bg-green-500 text-black' : ''}
+                        ${isCurrent && status !== 'failed' ? 'bg-yellow-500 text-black animate-pulse' : ''}
+                        ${isCurrent && status === 'failed' ? 'bg-red-500 text-white' : ''}
+                        ${isFuture  ? 'bg-gray-700 text-gray-500' : ''}
+                      `}>
+                        {isPast ? '✓' : isCurrent && status === 'failed' ? '✗' : i + 1}
+                      </div>
+                      <span className={`text-xs mt-1 text-center
+                        ${isPast    ? 'text-green-400' : ''}
+                        ${isCurrent && status !== 'failed' ? 'text-yellow-400' : ''}
+                        ${isCurrent && status === 'failed' ? 'text-red-400' : ''}
+                        ${isFuture  ? 'text-gray-600' : ''}
+                      `}>
+                        {stage.label}
+                      </span>
+                    </div>
+                    {i < PIPELINE_STAGES.length - 1 && (
+                      <div className={`h-px flex-1 mb-4 ${isPast ? 'bg-green-500' : 'bg-gray-700'}`} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {status === 'scored' && (
+              <p className="text-green-400 text-sm text-center">
+                ✓ Judging complete — check the leaderboard for your rank
+              </p>
+            )}
+            {status === 'failed' && (
+              <p className="text-red-400 text-sm text-center">
+                Pipeline failed. Check your Dockerfile and try again.
+              </p>
+            )}
           </div>
         )}
 

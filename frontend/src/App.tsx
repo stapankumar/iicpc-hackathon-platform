@@ -11,7 +11,7 @@ export default function App() {
       <nav className="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-2xl font-bold text-green-400">IICPC</span>
-          <span className="text-gray-400 text-sm">Distributed Benchmarking Platform</span>
+          <span className="text-gray-400 text-sm">Distributed Hosting and Benchmarking Platform</span>
         </div>
         <div className="flex gap-4">
           <button
