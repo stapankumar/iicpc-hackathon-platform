@@ -3,8 +3,8 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"log"
+	"os"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -15,6 +15,7 @@ type Score struct {
 	P90          float64 `json:"p90_ms"`
 	P99          float64 `json:"p99_ms"`
 	TPS          float64 `json:"tps"`
+	Correctness  float64 `json:"correctness"`
 	Score        float64 `json:"score"`
 }
 
@@ -46,7 +47,7 @@ func SaveScore(s Score) error {
 func GetTopScores(limit int) ([]Score, error) {
 	ctx := context.Background()
 
-	// Get top N scores descending
+	// Members are now submissionIDs, not JSON
 	results, err := rdb.ZRevRangeWithScores(ctx, "leaderboard", 0, int64(limit-1)).Result()
 	if err != nil {
 		return nil, err
@@ -54,9 +55,18 @@ func GetTopScores(limit int) ([]Score, error) {
 
 	var scores []Score
 	for _, r := range results {
+		submissionID := r.Member.(string)
+
+		// Fetch full score JSON from the details hash
+		val, err := rdb.HGet(ctx, "leaderboard:details", submissionID).Result()
+		if err != nil {
+			log.Printf("failed to fetch details for %s: %v", submissionID, err)
+			continue
+		}
+
 		var s Score
-		if err := json.Unmarshal([]byte(r.Member.(string)), &s); err != nil {
-			log.Printf("failed to unmarshal score: %v", err)
+		if err := json.Unmarshal([]byte(val), &s); err != nil {
+			log.Printf("failed to unmarshal score for %s: %v", submissionID, err)
 			continue
 		}
 		scores = append(scores, s)

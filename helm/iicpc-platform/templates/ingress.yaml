@@ -25,6 +25,13 @@ spec:
             name: submission-service
             port:
               number: {{ .Values.submissionService.port }}
+      - path: /status
+        pathType: Prefix
+        backend:
+          service:
+            name: submission-service
+            port:
+              number: {{ .Values.submissionService.port }}
       - path: /scores
         pathType: Prefix
         backend:

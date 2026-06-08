@@ -43,6 +43,8 @@ spec:
           value: {{ .Values.submissionService.registryMirror }}
         - name: BOT_FLEET_IMAGE_TAG
           value: {{ .Values.global.imageTag }}
+        - name: CORRECTNESS_HARNESS_IMAGE_TAG
+          value: {{ .Values.global.correctnessHarnessImageTag }}
         resources:
           limits:
             cpu: {{ .Values.submissionService.resources.limits.cpu }}

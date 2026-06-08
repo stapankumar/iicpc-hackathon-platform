@@ -76,6 +76,7 @@ declare -A SERVICE_PATHS=(
   [telemetry-service]="./backend/telemetry-service"
   [leaderboard-service]="./backend/leaderboard-service"
   [sandbox-runner]="./backend/sandbox-runner"
+  [correctness-harness]="./backend/correctness-harness"
 )
 
 # -------------------------------------------------------
@@ -218,6 +219,7 @@ if [ "$FULL_DEPLOY" = true ]; then
       && log_info "  Removed cached images for: $NAME" || true
   done
 
+  kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
   log_info "Waiting for namespace to fully terminate..."
   while kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; do
     sleep 2
@@ -266,9 +268,13 @@ if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   log_success "Docker registry secret applied (user: $DOCKER_USERNAME)"
 else
-  log_warn "DOCKER_USERNAME / DOCKER_PASSWORD not set — skipping registry secret"
-  log_warn "You may hit Docker Hub rate limits on third-party image pulls"
-  log_warn "To fix: export DOCKER_USERNAME=you DOCKER_PASSWORD='your_token'"
+  kubectl create secret docker-registry dockerhub-secret \
+    --namespace="$NAMESPACE" \
+    --docker-server=https://index.docker.io/v1/ \
+    --docker-username="placeholder" \
+    --docker-password="placeholder" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  log_success "Docker registry secret created (no credentials — internal registry only)"
 fi
 
 # -------------------------------------------------------
@@ -333,6 +339,7 @@ log_info "Registry IP: ${REGISTRY_IP}"
 helm upgrade --install "$PLATFORM_NAME" "$HELM_CHART" \
   --namespace "$NAMESPACE" \
   --set global.imageTag="${BUILD_TAG}" \
+  --set global.correctnessHarnessImageTag="${BUILD_TAG}" \
   --set submissionService.registryAddress="${REGISTRY_IP}:80" \
   --set submissionService.registryMirror="${REGISTRY_IP}:80" \
   --wait \

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/iicpc/bot-fleet/bots"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -47,6 +49,25 @@ func main() {
 	}
 
 	wg.Wait()
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer rdb.Close()
+
+	sid := os.Getenv("SUBMISSION_ID")
+	rdb.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: "telemetry:orders",
+		Values: map[string]interface{}{
+			"submission_id": sid,
+			"event":         "done",
+			"latency_ms":    "0",
+		},
+	})
+	log.Printf("[BOT-FLEET] done signal sent for submission %s", sid)
+
 	elapsed := time.Since(start)
 	totalOrders := numBots * ordersPerBot
 	log.Printf("Done! %d orders in %s → %.0f orders/sec",

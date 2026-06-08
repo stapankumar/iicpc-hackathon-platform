@@ -20,7 +20,7 @@ func Consume(ctx context.Context, store *metrics.MetricStore) {
 
 	rdb.XGroupCreateMkStream(ctx, streamKey, "telemetry-group", "$")
 
-	log.Println("Listening on Redis Stream:", streamKey)
+	log.Println("[TELEMETRY] listening on Redis Stream:", streamKey)
 
 	for {
 		select {
@@ -41,25 +41,37 @@ func Consume(ctx context.Context, store *metrics.MetricStore) {
 
 			for _, stream := range streams {
 				for _, msg := range stream.Messages {
-					latencyStr, ok := msg.Values["latency_ms"].(string)
-					if !ok {
-						continue
-					}
-					latency, err := strconv.ParseFloat(latencyStr, 64)
-					if err != nil {
-						continue
-					}
 
 					subID, _ := msg.Values["submission_id"].(string)
 					if subID == "" {
 						subID = "unknown"
 					}
+
+					// Done signal from bot-fleet — compute and push final score
+					if event, _ := msg.Values["event"].(string); event == "done" {
+						log.Printf("[TELEMETRY] done signal received for %s", subID)
+						rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
+						store.FinalizeSubmission(subID)
+						continue
+					}
+
+					// Normal latency record
+					latencyStr, ok := msg.Values["latency_ms"].(string)
+					if !ok {
+						rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
+						continue
+					}
+					latency, err := strconv.ParseFloat(latencyStr, 64)
+					if err != nil {
+						rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
+						continue
+					}
+
 					store.Record(subID, latency)
 					rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
 				}
 			}
-
-			store.PrintStats()
+			// NOTE: PrintStats removed — score is computed once on done signal only
 		}
 	}
 }

@@ -69,7 +69,17 @@ func SpawnSandboxJob(submissionID string, zipPath string) error {
 	}
 	log.Printf("[K8S] sandbox pod ready")
 
-	// Step 5 — Create bot-fleet Job
+	// Step 5 — Run correctness harness (sequential, before load)
+	log.Printf("[K8S] spawning correctness harness for %s", id8)
+	if err := spawnCorrectnessJob(clientset, id8, submissionID); err != nil {
+		return fmt.Errorf("correctness job failed: %w", err)
+	}
+	if err := waitForJob(clientset, "correctness-"+id8, 3*time.Minute); err != nil {
+		return fmt.Errorf("correctness job did not complete: %w", err)
+	}
+	log.Printf("[K8S] correctness harness complete for %s", id8)
+
+	// Step 6 — Create bot-fleet Job
 	log.Printf("[K8S] spawning bot-fleet job for %s", id8)
 	if err := spawnBotFleetJob(clientset, id8, submissionID); err != nil {
 		return fmt.Errorf("bot-fleet job failed: %w", err)
@@ -77,6 +87,50 @@ func SpawnSandboxJob(submissionID string, zipPath string) error {
 
 	log.Printf("[K8S] pipeline complete for submission %s", submissionID)
 	return nil
+}
+
+func spawnCorrectnessJob(clientset *kubernetes.Clientset, id8, submissionID string) error {
+	ttl := int32(300)
+	backoff := int32(0)
+	targetURL := fmt.Sprintf("http://sandbox-%s:8080", id8)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "correctness-" + id8,
+			Namespace: namespace,
+			Labels:    map[string]string{"app": "correctness", "submission-id": id8},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			BackoffLimit:            &backoff,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
+						{
+							Name:            "correctness-harness",
+							Image:           "correctness-harness:" + os.Getenv("CORRECTNESS_HARNESS_IMAGE_TAG"),
+							ImagePullPolicy: corev1.PullNever,
+							Env: []corev1.EnvVar{
+								{Name: "TARGET_URL", Value: targetURL},
+								{Name: "SUBMISSION_ID", Value: submissionID},
+								{Name: "REDIS_ADDR", Value: "redis:6379"},
+							},
+							Resources: corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("200m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := clientset.BatchV1().Jobs(namespace).Create(context.Background(), job, metav1.CreateOptions{})
+	return err
 }
 
 func spawnKanikoJob(clientset *kubernetes.Clientset, id8, zipPath, imageName string) error {

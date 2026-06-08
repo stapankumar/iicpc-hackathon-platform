@@ -3,11 +3,12 @@ package metrics
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -18,12 +19,14 @@ type Score struct {
 	P90          float64 `json:"p90_ms"`
 	P99          float64 `json:"p99_ms"`
 	TPS          float64 `json:"tps"`
+	Correctness  float64 `json:"correctness"`
 	Score        float64 `json:"score"`
 }
 
 type submissionData struct {
 	latencies []float64
 	total     int
+	startTime time.Time
 }
 
 type MetricStore struct {
@@ -51,38 +54,92 @@ func (m *MetricStore) Record(submissionID string, latencyMs float64) {
 	if _, ok := m.stores[submissionID]; !ok {
 		m.stores[submissionID] = &submissionData{}
 	}
-	m.stores[submissionID].latencies = append(m.stores[submissionID].latencies, latencyMs)
-	m.stores[submissionID].total++
+	d := m.stores[submissionID]
+	d.latencies = append(d.latencies, latencyMs)
+	d.total++
+	if d.total == 1 {
+		d.startTime = time.Now() // Record start time on first record
+	}
 }
 
-func (m *MetricStore) PrintStats() {
+// FinalizeSubmission is called once when the bot fleet sends the done signal.
+// It computes the final score over all recorded latencies, reads the correctness
+// score published by the correctness harness from Redis, then pushes one entry
+// to the leaderboard. Cleans up memory after.
+func (m *MetricStore) FinalizeSubmission(submissionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for subID, data := range m.stores {
-		if len(data.latencies) == 0 || data.total%100 != 0 {
-			continue
+	data, ok := m.stores[submissionID]
+	if !ok || len(data.latencies) == 0 {
+		log.Printf("[TELEMETRY] no latency data for %s, skipping finalize", submissionID)
+		return
+	}
+
+	sorted := make([]float64, len(data.latencies))
+	copy(sorted, data.latencies)
+	sort.Float64s(sorted)
+
+	p50 := percentile(sorted, 50)
+	p90 := percentile(sorted, 90)
+	p99 := percentile(sorted, 99)
+	elapsed := time.Since(data.startTime).Seconds()
+	if elapsed < 1 {
+		elapsed = 1
+	}
+	tps := float64(data.total) / elapsed
+
+	// Read correctness score published by the correctness harness job.
+	// If not found (harness failed or timed out), default to 0.
+	correctness := 0.0
+	ctx := context.Background()
+	key := "correctness:" + submissionID
+	val, err := m.rdb.Get(ctx, key).Result()
+	if err != nil {
+		log.Printf("[TELEMETRY] correctness key not found for %s, defaulting to 0.0", submissionID)
+	} else {
+		correctness, err = strconv.ParseFloat(val, 64)
+		if err != nil {
+			log.Printf("[TELEMETRY] failed to parse correctness for %s: %v", submissionID, err)
+			correctness = 0.0
 		}
-		sorted := make([]float64, len(data.latencies))
-		copy(sorted, data.latencies)
-		sort.Float64s(sorted)
+	}
 
-		p50 := percentile(sorted, 50)
-		p90 := percentile(sorted, 90)
-		p99 := percentile(sorted, 99)
-		tps := float64(data.total) / 10.0
-		score := (tps * 0.4) + ((1.0 / p99) * 1000 * 0.4) + (100.0 * 0.2)
+	// Score formula: 40% TPS + 40% latency (inverse p99) + 20% correctness
+	score := (tps * 0.4) + ((1.0 / p99) * 1000 * 0.4) + (correctness * 100 * 0.2)
 
-		fmt.Printf("\n=== TELEMETRY STATS [%s] (n=%d) ===\n", subID, data.total)
-		fmt.Printf("  p50: %.2f ms  p90: %.2f ms  p99: %.2f ms\n", p50, p90, p99)
-		fmt.Printf("  TPS: %.0f  Score: %.2f\n", tps, score)
-		fmt.Println("==============================")
+	log.Printf("[TELEMETRY] FINAL — %s n=%d p50=%.2fms p90=%.2fms p99=%.2fms tps=%.0f correctness=%.2f score=%.2f",
+		submissionID, data.total, p50, p90, p99, tps, correctness, score)
 
-		m.pushToLeaderboard(Score{
-			SubmissionID: subID,
-			P50:          p50, P90: p90, P99: p99,
-			TPS: tps, Score: score,
-		})
+	m.pushToLeaderboard(Score{
+		SubmissionID: submissionID,
+		P50:          p50,
+		P90:          p90,
+		P99:          p99,
+		TPS:          tps,
+		Correctness:  correctness,
+		Score:        score,
+	})
+
+	// Clean up — this submission is done, free the memory
+	delete(m.stores, submissionID)
+
+	// Clean up the correctness key from Redis too
+	m.rdb.Del(ctx, key)
+}
+
+// Flush is a shutdown safety net — finalizes any submission that never got a done signal.
+func (m *MetricStore) Flush() {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.stores))
+	for id := range m.stores {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+
+	for _, id := range ids {
+		log.Printf("[TELEMETRY] flush on shutdown for %s", id)
+		m.FinalizeSubmission(id)
 	}
 }
 
@@ -95,52 +152,28 @@ func (m *MetricStore) pushToLeaderboard(s Score) {
 		return
 	}
 
-	err = m.rdb.ZAdd(ctx, "leaderboard", redis.Z{
-		Score:  s.Score,
-		Member: string(data),
-	}).Err()
+	pipe := m.rdb.Pipeline()
 
+	// SubmissionID as member — ZAdd updates in place, one entry per submission
+	pipe.ZAdd(ctx, "leaderboard", redis.Z{
+		Score:  s.Score,
+		Member: s.SubmissionID,
+	})
+
+	// Full score details in a hash for the leaderboard service to read
+	pipe.HSet(ctx, "leaderboard:details", s.SubmissionID, string(data))
+
+	pipe.Set(ctx, "submission:status:"+s.SubmissionID, "SCORED", 24*time.Hour)
+	pipe.Set(ctx, "submission:score:"+s.SubmissionID, strconv.FormatFloat(s.Score, 'f', 2, 64), 24*time.Hour)
+
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		log.Printf("[LEADERBOARD] failed to push score: %v", err)
 		return
 	}
 
-	log.Printf("[LEADERBOARD] score pushed → submission: %s score: %.2f",
-		s.SubmissionID, s.Score)
-}
-
-// Add this method to MetricStore
-func (m *MetricStore) Flush() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for subID, data := range m.stores {
-		if len(data.latencies) == 0 {
-			log.Println("[TELEMETRY] No data to flush")
-			return
-		}
-
-		sorted := make([]float64, len(data.latencies))
-		copy(sorted, data.latencies)
-		sort.Float64s(sorted)
-
-		p50 := percentile(sorted, 50)
-		p90 := percentile(sorted, 90)
-		p99 := percentile(sorted, 99)
-		tps := float64(data.total) / 10.0
-		score := (tps * 0.4) + ((1.0 / p99) * 1000 * 0.4) + (100.0 * 0.2)
-
-		log.Printf("[TELEMETRY] Flushing final score on shutdown — n=%d score=%.2f", data.total, score)
-
-		m.pushToLeaderboard(Score{
-			SubmissionID: subID,
-			P50:          p50,
-			P90:          p90,
-			P99:          p99,
-			TPS:          tps,
-			Score:        score,
-		})
-	}
+	log.Printf("[LEADERBOARD] pushed → %s correctness=%.2f score=%.2f",
+		s.SubmissionID, s.Correctness, s.Score)
 }
 
 func percentile(sorted []float64, p float64) float64 {
