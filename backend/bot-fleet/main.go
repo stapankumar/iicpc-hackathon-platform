@@ -64,6 +64,7 @@ func main() {
 			"submission_id": sid,
 			"event":         "done",
 			"latency_ms":    "0",
+			"team_name":     os.Getenv("TEAM_NAME"),
 		},
 	})
 	log.Printf("[BOT-FLEET] done signal sent for submission %s", sid)

@@ -34,7 +34,7 @@ func getClient() (*kubernetes.Clientset, error) {
 	return kubernetes.NewForConfig(config)
 }
 
-func SpawnSandboxJob(submissionID string, zipPath string) error {
+func SpawnSandboxJob(submissionID string, zipPath string, teamName string) error {
 	id8 := submissionID[:8]
 	imageName := fmt.Sprintf("%s/submission-%s:latest", registry, id8)
 
@@ -45,7 +45,7 @@ func SpawnSandboxJob(submissionID string, zipPath string) error {
 
 	// Step 1 — Kaniko Job: build image from zip and push to registry
 	log.Printf("[K8S] spawning Kaniko build job for %s", id8)
-	if err := spawnKanikoJob(clientset, id8, zipPath, imageName); err != nil {
+	if err := spawnKanikoJob(clientset, id8, imageName); err != nil {
 		return fmt.Errorf("kaniko job failed: %w", err)
 	}
 
@@ -81,7 +81,7 @@ func SpawnSandboxJob(submissionID string, zipPath string) error {
 
 	// Step 6 — Create bot-fleet Job
 	log.Printf("[K8S] spawning bot-fleet job for %s", id8)
-	if err := spawnBotFleetJob(clientset, id8, submissionID); err != nil {
+	if err := spawnBotFleetJob(clientset, id8, submissionID, teamName); err != nil {
 		return fmt.Errorf("bot-fleet job failed: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func spawnCorrectnessJob(clientset *kubernetes.Clientset, id8, submissionID stri
 	return err
 }
 
-func spawnKanikoJob(clientset *kubernetes.Clientset, id8, zipPath, imageName string) error {
+func spawnKanikoJob(clientset *kubernetes.Clientset, id8, imageName string) error {
 	ttl := int32(300)
 	backoff := int32(0)
 
@@ -276,7 +276,7 @@ func spawnSandboxPod(clientset *kubernetes.Clientset, id8, imageName, submission
 	return err
 }
 
-func spawnBotFleetJob(clientset *kubernetes.Clientset, id8, submissionID string) error {
+func spawnBotFleetJob(clientset *kubernetes.Clientset, id8, submissionID, teamName string) error {
 	ttl := int32(120)
 	backoff := int32(0)
 	targetURL := fmt.Sprintf("http://sandbox-%s:8080", id8)
@@ -307,6 +307,7 @@ func spawnBotFleetJob(clientset *kubernetes.Clientset, id8, submissionID string)
 								{Name: "NUM_BOTS", Value: "500"},
 								{Name: "ORDERS_PER_BOT", Value: "100"},
 								{Name: "REDIS_ADDR", Value: "redis:6379"},
+								{Name: "TEAM_NAME", Value: teamName},
 							},
 							Resources: corev1.ResourceRequirements{
 								Limits: corev1.ResourceList{

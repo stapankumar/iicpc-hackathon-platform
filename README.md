@@ -94,7 +94,9 @@ EOF
 
 **Before each fresh test run:**
 ```bash
-redis-cli FLUSHALL
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL leaderboard
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL leaderboard:details
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL telemetry:orders
 ```
 
 Run each service in a separate terminal:

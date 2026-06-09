@@ -109,6 +109,11 @@ else
   log_success "minikube started"
 fi
 
+if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+    minikube ssh "docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD" >/dev/null 2>&1
+    log_success "Docker Hub authenticated inside minikube"
+fi
+
 # -------------------------------------------------------
 # ADDONS
 # -------------------------------------------------------
@@ -120,15 +125,34 @@ for ADDON in ingress metrics-server; do
     || log_warn "$ADDON already enabled or skipped"
 done
 
+# Pre-load registry image before enabling addon — avoids Docker Hub rate limit
+if ! minikube image ls 2>/dev/null | grep -q "registry:3.0.0"; then
+    log_info "Pre-loading registry:3.0.0 into minikube..."
+    docker pull registry:3.0.0
+    minikube image load registry:3.0.0
+    log_success "registry:3.0.0 pre-loaded"
+fi
+
 # Registry addon — only if not already running
 if ! kubectl get pod -n kube-system -l kubernetes.io/minikube-addons=registry \
     --no-headers 2>/dev/null | grep -q Running; then
-  minikube addons enable registry \
-    --images='KubeRegistryProxy=gcr.io/google_containers/kube-registry-proxy:0.4' \
-    >/dev/null 2>&1 && log_success "registry addon enabled"
+  if minikube addons enable registry \
+    --images='KubeRegistryProxy=gcr.io/google_containers/kube-registry-proxy:0.4'; then
+    log_success "registry addon enabled"
+    # Force local image — avoids digest-pinned Docker Hub pull
+    kubectl patch deployment registry -n kube-system \
+      -p '{"spec":{"template":{"spec":{"containers":[{"name":"registry","image":"docker.io/registry:3.0.0","imagePullPolicy":"Never"}]}}}}'
+  else
+    log_error "registry addon failed to enable — run: export DOCKER_USERNAME=x DOCKER_PASSWORD=y"
+  fi
 else
   log_success "registry addon already running"
 fi
+
+log_info "Waiting for registry pod to be ready..."
+kubectl wait pod -n kube-system -l actual-registry=true \
+  --for=condition=Ready --timeout=120s
+log_success "Registry pod ready"
 
 # -------------------------------------------------------
 # PRE-LOAD THIRD-PARTY IMAGES
@@ -219,7 +243,12 @@ if [ "$FULL_DEPLOY" = true ]; then
       && log_info "  Removed cached images for: $NAME" || true
   done
 
-  kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
+  if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    log_warn "Namespace '$NAMESPACE' found — deleting..."
+    kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
+  else
+    log_warn "Namespace '$NAMESPACE' not found — skipping delete"
+  fi
   log_info "Waiting for namespace to fully terminate..."
   while kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; do
     sleep 2
@@ -354,13 +383,24 @@ fi
 if [ -n "$SINGLE_SERVICE" ]; then
   log_info "Updating image for $SINGLE_SERVICE..."
 
-  # Force pod replacement — the new image tag means Kubernetes
-  # will schedule a pod with the new image automatically via
-  # Helm's upgrade above. rollout restart ensures it happens now.
-  kubectl set image deployment/"$SINGLE_SERVICE" \
-    "${SINGLE_SERVICE}=${SINGLE_SERVICE}:${BUILD_TAG}" \
-    -n "$NAMESPACE"
-  kubectl rollout status deployment/"$SINGLE_SERVICE" -n "$NAMESPACE" --timeout=90s
+  if [ "$SINGLE_SERVICE" = "bot-fleet" ]; then
+    kubectl set env deployment/submission-service \
+      -n "$NAMESPACE" \
+      BOT_FLEET_IMAGE_TAG="$BUILD_TAG"
+    kubectl rollout status deployment/submission-service -n "$NAMESPACE" --timeout=90s
+
+  elif [ "$SINGLE_SERVICE" = "correctness-harness" ]; then
+    kubectl set env deployment/submission-service \
+      -n "$NAMESPACE" \
+      CORRECTNESS_HARNESS_IMAGE_TAG="$BUILD_TAG"
+    kubectl rollout status deployment/submission-service -n "$NAMESPACE" --timeout=90s
+
+  else
+    kubectl set image deployment/"$SINGLE_SERVICE" \
+      "${SINGLE_SERVICE}=${SINGLE_SERVICE}:${BUILD_TAG}" \
+      -n "$NAMESPACE"
+    kubectl rollout status deployment/"$SINGLE_SERVICE" -n "$NAMESPACE" --timeout=90s
+  fi
 
 else
   log_step "Rolling Restart (all deployments)"
@@ -415,4 +455,7 @@ echo "  cd frontend && npm run dev"
 echo "=============================================="
 echo ""
 
+# export DOCKER_USERNAME=yourusername
+# export DOCKER_PASSWORD=yourtoken
+# stapankumar
 # 7U;ZX=*y9U3sA!y

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -17,6 +18,8 @@ type Score struct {
 	TPS          float64 `json:"tps"`
 	Correctness  float64 `json:"correctness"`
 	Score        float64 `json:"score"`
+	TeamName     string  `json:"team_name"`
+	Attempts     int     `json:"attempts"`
 }
 
 var rdb = redis.NewClient(&redis.Options{
@@ -69,6 +72,10 @@ func GetTopScores(limit int) ([]Score, error) {
 			log.Printf("failed to unmarshal score for %s: %v", submissionID, err)
 			continue
 		}
+
+		attemptsStr, _ := rdb.Get(ctx, "attempts:"+s.TeamName).Result()
+		s.Attempts, _ = strconv.Atoi(attemptsStr)
+
 		scores = append(scores, s)
 	}
 	return scores, nil

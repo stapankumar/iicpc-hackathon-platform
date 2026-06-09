@@ -47,11 +47,14 @@ func Consume(ctx context.Context, store *metrics.MetricStore) {
 						subID = "unknown"
 					}
 
+					teamName, _ := msg.Values["team_name"].(string)
+
 					// Done signal from bot-fleet — compute and push final score
 					if event, _ := msg.Values["event"].(string); event == "done" {
 						log.Printf("[TELEMETRY] done signal received for %s", subID)
 						rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
-						store.FinalizeSubmission(subID)
+						teamName, _ := msg.Values["team_name"].(string)
+						store.FinalizeSubmission(subID, teamName)
 						continue
 					}
 
@@ -66,8 +69,7 @@ func Consume(ctx context.Context, store *metrics.MetricStore) {
 						rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
 						continue
 					}
-
-					store.Record(subID, latency)
+					store.Record(subID, latency, teamName)
 					rdb.XAck(ctx, streamKey, "telemetry-group", msg.ID)
 				}
 			}

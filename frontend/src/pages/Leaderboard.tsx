@@ -3,12 +3,12 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 
 interface Score {
   submission_id: string
-  p50_ms: number
-  p90_ms: number
+  team_name: string
   p99_ms: number
   tps: number
   correctness: number
   score: number
+  attempts: number
 }
 
 export default function Leaderboard() {
@@ -52,14 +52,14 @@ export default function Leaderboard() {
             <LineChart data={scores}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis
-                dataKey="submission_id"
+                dataKey="team_name"
                 tick={false}
                 axisLine={{ stroke: '#374151' }}
               />
               <YAxis tick={{ fill: '#9CA3AF' }} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                labelFormatter={(v) => `ID: ${v}`}
+                labelFormatter={(v) => `Team: ${v}`}
               />
               <Line type="monotone" dataKey="p50_ms" stroke="#34D399" name="p50" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="p90_ms" stroke="#FBBF24" name="p90" strokeWidth={2} dot={false} />
@@ -75,19 +75,18 @@ export default function Leaderboard() {
           <thead className="bg-gray-800 text-gray-400 uppercase text-xs">
             <tr>
               <th className="px-6 py-3 text-left">Rank</th>
-              <th className="px-6 py-3 text-left">Submission ID</th>
-              <th className="px-6 py-3 text-right">p50 (ms)</th>
-              <th className="px-6 py-3 text-right">p90 (ms)</th>
+              <th className="px-6 py-3 text-left">Team</th>
               <th className="px-6 py-3 text-right">p99 (ms)</th>
               <th className="px-6 py-3 text-right">TPS</th>
               <th className="px-6 py-3 text-right">Correctness</th>
               <th className="px-6 py-3 text-right">Score</th>
+              <th className="px-6 py-3 text-right">Attempts</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
             {scores.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
+                <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                   No submissions yet. Be the first to submit!
                 </td>
               </tr>
@@ -106,12 +105,10 @@ export default function Leaderboard() {
 
                   {/* Submission ID */}
                   <td className="px-6 py-4 font-mono text-green-400">
-                    {s.submission_id.slice(0, 12)}...
+                    {s.team_name || s.submission_id.slice(0, 12)}
                   </td>
 
                   {/* Latencies */}
-                  <td className="px-6 py-4 text-right text-green-300">{s.p50_ms.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right text-yellow-300">{s.p90_ms.toFixed(2)}</td>
                   <td className="px-6 py-4 text-right text-red-300">{s.p99_ms.toFixed(2)}</td>
 
                   {/* TPS */}
@@ -133,6 +130,9 @@ export default function Leaderboard() {
                       {s.score.toFixed(1)}
                     </span>
                   </td>
+
+                  {/* Attempts */}
+                  <td className="px-6 py-4 text-right text-gray-400">{s.attempts}</td>
 
                 </tr>
               ))

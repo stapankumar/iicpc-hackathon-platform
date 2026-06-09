@@ -21,12 +21,14 @@ type Score struct {
 	TPS          float64 `json:"tps"`
 	Correctness  float64 `json:"correctness"`
 	Score        float64 `json:"score"`
+	TeamName     string  `json:"team_name"`
 }
 
 type submissionData struct {
 	latencies []float64
 	total     int
 	startTime time.Time
+	teamName  string
 }
 
 type MetricStore struct {
@@ -48,7 +50,7 @@ func NewMetricStore() *MetricStore {
 	}
 }
 
-func (m *MetricStore) Record(submissionID string, latencyMs float64) {
+func (m *MetricStore) Record(submissionID string, latencyMs float64, teamName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.stores[submissionID]; !ok {
@@ -60,13 +62,16 @@ func (m *MetricStore) Record(submissionID string, latencyMs float64) {
 	if d.total == 1 {
 		d.startTime = time.Now() // Record start time on first record
 	}
+	if d.teamName == "" && teamName != "" {
+		d.teamName = teamName
+	}
 }
 
 // FinalizeSubmission is called once when the bot fleet sends the done signal.
 // It computes the final score over all recorded latencies, reads the correctness
 // score published by the correctness harness from Redis, then pushes one entry
 // to the leaderboard. Cleans up memory after.
-func (m *MetricStore) FinalizeSubmission(submissionID string) {
+func (m *MetricStore) FinalizeSubmission(submissionID string, teamName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -111,8 +116,27 @@ func (m *MetricStore) FinalizeSubmission(submissionID string) {
 	log.Printf("[TELEMETRY] FINAL — %s n=%d p50=%.2fms p90=%.2fms p99=%.2fms tps=%.0f correctness=%.2f score=%.2f",
 		submissionID, data.total, p50, p90, p99, tps, correctness, score)
 
+	member := teamName
+	if member == "" {
+		member = data.teamName
+	}
+	if member == "" {
+		member = submissionID
+	}
+
+	m.rdb.Incr(ctx, "attempts:"+member)
+	m.rdb.Set(ctx, "submission:status:"+submissionID, "SCORED", 24*time.Hour)
+
+	existing, err := m.rdb.ZScore(ctx, "leaderboard", member).Result()
+	if err == nil && existing >= score {
+		log.Printf("[TELEMETRY] score %.2f not better than existing %.2f for %s, skipping", score, existing, member)
+		delete(m.stores, submissionID)
+		return
+	}
+
 	m.pushToLeaderboard(Score{
 		SubmissionID: submissionID,
+		TeamName:     member,
 		P50:          p50,
 		P90:          p90,
 		P99:          p99,
@@ -139,7 +163,7 @@ func (m *MetricStore) Flush() {
 
 	for _, id := range ids {
 		log.Printf("[TELEMETRY] flush on shutdown for %s", id)
-		m.FinalizeSubmission(id)
+		m.FinalizeSubmission(id, "")
 	}
 }
 
@@ -157,11 +181,11 @@ func (m *MetricStore) pushToLeaderboard(s Score) {
 	// SubmissionID as member — ZAdd updates in place, one entry per submission
 	pipe.ZAdd(ctx, "leaderboard", redis.Z{
 		Score:  s.Score,
-		Member: s.SubmissionID,
+		Member: s.TeamName,
 	})
 
 	// Full score details in a hash for the leaderboard service to read
-	pipe.HSet(ctx, "leaderboard:details", s.SubmissionID, string(data))
+	pipe.HSet(ctx, "leaderboard:details", s.TeamName, string(data))
 
 	pipe.Set(ctx, "submission:status:"+s.SubmissionID, "SCORED", 24*time.Hour)
 	pipe.Set(ctx, "submission:score:"+s.SubmissionID, strconv.FormatFloat(s.Score, 'f', 2, 64), 24*time.Hour)

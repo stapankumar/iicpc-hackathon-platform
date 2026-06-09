@@ -30,6 +30,12 @@ func HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	teamName := r.FormValue("team_name")
+	if teamName == "" {
+		teamName = "anonymous"
+	}
+	log.Printf("[SUBMIT] team_name received: %s", teamName)
+
 	file, _, err := r.FormFile("submission")
 	if err != nil {
 		http.Error(w, `{"error":"missing submission file"}`, http.StatusBadRequest)
@@ -75,7 +81,7 @@ func HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Spawn pipeline in background — response returns immediately
 	go func() {
 		submissions[submissionID] = "BUILDING"
-		if err := k8s.SpawnSandboxJob(submissionID, workspaceDir); err != nil {
+		if err := k8s.SpawnSandboxJob(submissionID, workspaceDir, teamName); err != nil {
 			submissions[submissionID] = "FAILED"
 			log.Printf("[SUBMIT] pipeline failed for %s: %v", id8, err)
 			return
@@ -87,6 +93,7 @@ func HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"submission_id": submissionID,
 		"status":        "BUILDING",
+		"team_name":     teamName,
 		"message":       fmt.Sprintf("Submission received, building image for %s", submissionID),
 	})
 }

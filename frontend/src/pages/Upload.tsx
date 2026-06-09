@@ -22,6 +22,7 @@ export default function Upload() {
   const [status, setStatus]           = useState<UploadStatus>('idle')
   const [submissionID, setSubmissionID] = useState('')
   const [error, setError]             = useState('')
+  const [teamName, setTeamName] = useState('')
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Poll /status until SCORED or FAILED
@@ -54,6 +55,7 @@ export default function Upload() {
 
     const formData = new FormData()
     formData.append('submission', file)
+    formData.append('team_name', teamName)
 
     try {
       const res = await fetch(
@@ -75,7 +77,7 @@ export default function Upload() {
   }
 
   const isInProgress = ['uploading', 'building', 'running'].includes(status)
-  const isDone       = status === 'scored' || status === 'failed'
+  const isDone = status === 'scored' || status === 'failed'
   const currentStage = status === 'scored'
   ? PIPELINE_STAGES.length  // all stages past
   : PIPELINE_STAGES.findIndex(s => s.key === status)
@@ -110,11 +112,18 @@ export default function Upload() {
           </li>
         </ul>
       </div>
-
+      
       {/* Upload Box */}
       <div className="bg-gray-900 rounded-xl p-6 border border-gray-800 space-y-4">
         <h2 className="text-lg font-semibold">Upload Submission</h2>
-
+        <input
+          type="text"
+          placeholder="Team name / your name"
+          value={teamName}
+          onChange={(e) => setTeamName(e.target.value)}
+          disabled={isInProgress || isDone}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+        />
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors
             ${isDone || isInProgress
@@ -132,7 +141,13 @@ export default function Upload() {
             accept=".zip"
             className="hidden"
             disabled={isInProgress || isDone}
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] || null)
+              if (status === 'scored') {
+                setStatus('idle')
+                setSubmissionID('')
+              }
+            }}
           />
           {file ? (
             <div className="space-y-1">
@@ -149,11 +164,13 @@ export default function Upload() {
 
         <button
           onClick={handleSubmit}
-          disabled={!file || isInProgress || isDone}
+          disabled={!file || !teamName.trim() || isInProgress || isDone}
           className="w-full py-3 bg-green-500 hover:bg-green-400 disabled:bg-gray-700
                      disabled:text-gray-500 text-black font-bold rounded-lg transition-colors"
         >
-          {status === 'uploading' ? 'Uploading...' : isInProgress ? 'Judging...' : 'Submit'}
+          {status === 'uploading' ? 'Uploading...' :
+            status === 'building'  ? 'Building...'  :
+            status === 'running'   ? 'Judging...'   : 'Submit'}
         </button>
 
         {/* Pipeline progress — shown after successful upload */}
