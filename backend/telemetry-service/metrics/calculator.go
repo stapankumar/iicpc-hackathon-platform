@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 type Score struct {
@@ -32,9 +35,11 @@ type submissionData struct {
 }
 
 type MetricStore struct {
-	mu     sync.Mutex
-	stores map[string]*submissionData
-	rdb    *redis.Client
+	mu        sync.Mutex
+	stores    map[string]*submissionData
+	rdb       *redis.Client
+	k8sClient *kubernetes.Clientset
+	namespace string
 }
 
 func NewMetricStore() *MetricStore {
@@ -42,11 +47,19 @@ func NewMetricStore() *MetricStore {
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
+
+	// K8s in-cluster client — only works inside the pod
+	var k8sClient *kubernetes.Clientset
+	config, err := rest.InClusterConfig()
+	if err == nil {
+		k8sClient, _ = kubernetes.NewForConfig(config)
+	}
+
 	return &MetricStore{
-		stores: make(map[string]*submissionData),
-		rdb: redis.NewClient(&redis.Options{
-			Addr: redisAddr,
-		}),
+		stores:    make(map[string]*submissionData),
+		rdb:       redis.NewClient(&redis.Options{Addr: redisAddr}),
+		k8sClient: k8sClient,
+		namespace: os.Getenv("K8S_NAMESPACE"),
 	}
 }
 
@@ -148,6 +161,8 @@ func (m *MetricStore) FinalizeSubmission(submissionID string, teamName string) {
 	// Clean up — this submission is done, free the memory
 	delete(m.stores, submissionID)
 
+	id8 := submissionID[:8]
+	go m.cleanupSandbox(id8)
 	// Clean up the correctness key from Redis too
 	m.rdb.Del(ctx, key)
 }
@@ -209,4 +224,24 @@ func percentile(sorted []float64, p float64) float64 {
 		idx = len(sorted) - 1
 	}
 	return sorted[idx]
+}
+
+func (m *MetricStore) cleanupSandbox(id8 string) {
+	if m.k8sClient == nil {
+		log.Printf("[CLEANUP] k8s client not available, skipping sandbox cleanup for %s", id8)
+		return
+	}
+	ctx := context.Background()
+	err := m.k8sClient.CoreV1().Pods(m.namespace).Delete(ctx, "sandbox-"+id8, metav1.DeleteOptions{})
+	if err != nil {
+		log.Printf("[CLEANUP] failed to delete sandbox pod %s: %v", id8, err)
+	} else {
+		log.Printf("[CLEANUP] deleted sandbox pod sandbox-%s", id8)
+	}
+	err = m.k8sClient.CoreV1().Services(m.namespace).Delete(ctx, "sandbox-"+id8, metav1.DeleteOptions{})
+	if err != nil {
+		log.Printf("[CLEANUP] failed to delete sandbox service %s: %v", id8, err)
+	} else {
+		log.Printf("[CLEANUP] deleted sandbox service sandbox-%s", id8)
+	}
 }

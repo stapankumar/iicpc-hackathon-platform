@@ -104,6 +104,10 @@ export default function Upload() {
           </li>
           <li className="flex gap-2">
             <span className="text-green-400">→</span>
+            Your server must handle <code className="bg-gray-800 px-1 rounded">SIGTERM</code> for graceful shutdown
+          </li>
+          <li className="flex gap-2">
+            <span className="text-green-400">→</span>
             Resource limits: <code className="bg-gray-800 px-1 rounded">2 CPU cores</code>, <code className="bg-gray-800 px-1 rounded">512MB RAM</code>
           </li>
           <li className="flex gap-2">
