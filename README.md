@@ -31,16 +31,9 @@ Think Codeforces — but for quantitative trading infrastructure.
 | Go | 1.24.0 | 1.24.0 |
 | Node.js | 18+ | 22+ |
 | Docker | 20+ | 26+ |
-| minikube | 1.33.1 | 1.33.1 |
+| minikube | 1.38.1 | 1.38.1 |
 | kubectl | 1.28+ | 1.30+ |
 | Helm | 3.0+ | 3.21+ |
-
-
-> **Note:** Use exactly minikube v1.33.1. The registry addon proxy image is broken in other versions. Install with:
-> ```bash
-> curl -LO https://github.com/kubernetes/minikube/releases/download/v1.33.1/minikube-linux-amd64
-> sudo install minikube-linux-amd64 /usr/local/bin/minikube
-> ```
 
 ---
 
@@ -83,13 +76,16 @@ cd hackathon-platform
 
 **One-time setup:**
 ```bash
-# 1. Make sure Redis is running
-redis-server --daemonize yes
-
-# 2. Create local frontend config (only needed once)
+# Create local frontend config (only needed once)
 cat > frontend/.env.local << 'EOF'
 VITE_LEADERBOARD_URL=http://localhost:8082
+VITE_SUBMISSION_URL=http://localhost:8081
 EOF
+```
+
+Make sure Redis is running locally:
+```bash
+redis-server --daemonize yes
 ```
 
 **Before each fresh test run:**
@@ -152,16 +148,21 @@ go run main.go
 
 **Deploy:**
 ```bash
-git clone 
+git clone <repo-url>
 cd iicpc-hackathon-platform
-./deploy.sh
+
+# Set Docker Hub credentials to avoid rate limits (required)
+export DOCKER_USERNAME=your_dockerhub_username
+export DOCKER_PASSWORD=your_access_token  # hub.docker.com/settings/security → New Access Token
+
+./deploy.sh --full
 ```
 
 The script automatically:
 - Detects your system CPU/RAM and allocates 60% to minikube
 - Enables Ingress and metrics-server addons
 - Configures `/etc/hosts` for `iicpc.local`
-- Builds all 6 Docker images
+- Builds all 7 Docker images (including correctness harness)
 - Loads images into minikube
 - Deploys entire platform via Helm
 - Rolls out all services with zero downtime
@@ -180,7 +181,10 @@ http://localhost:5173
 
 **To start fresh (clear all scores):**
 ```bash
-kubectl exec -n iicpc redis-0 -- redis-cli FLUSHALL
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL leaderboard
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL leaderboard:details
+kubectl exec -it redis-0 -n iicpc -- redis-cli DEL telemetry:orders
+kubectl rollout restart deployment/telemetry-service -n iicpc
 ```
 
 ---
@@ -250,43 +254,46 @@ Score = (TPS × 0.4) + (1/p99_ms × 1000 × 0.4) + (correctness% × 0.2)
 
 ## Architecture Overview
 ```text
-Contestant Upload (zip)
+Contestant Upload (zip + team name)
        │
        ▼
 Submission Service (:8081)
        │
-       ▼
-┌───────────────────────────────────────────┐
-│ K8s Job — Sandbox Runner                  │
-│   • isolated namespace                    │
-│   • CPU/mem limits                        │
-│   • NetworkPolicy                         │
-└───────────────────────────────────────────┘
+       ├─ Step 1: Kaniko Job — builds Docker image from zip
        │
-       ▼
-┌───────────────────────────────────────────┐
-│ Bot Fleet (100 goroutines × 2 pods)       │
-│   • POST /order                           │
-│   • DELETE /order                         │
-│   • GET /orderbook                        │
-└───────────────────────────────────────────┘
+       ├─ Step 2: Sandbox Pod — runs contestant's orderbook on :8080
        │
-       ▼
-Redis Streams (telemetry:orders)
+       ├─ Step 3: Correctness Harness Job — 6 sequential scenarios
+       │          publishes correctness score to Redis
        │
-       ▼
-┌───────────────────────────────────────────┐
-│ Telemetry Service                         │
-│   • p50 / p90 / p99                       │
-│   • TPS calculation                       │
-└───────────────────────────────────────────┘
-       │
-       ▼
-Leaderboard Service (:8082)
-       │
-       ▼
-Frontend (:5173)
-   • SSE stream
+       └─ Step 4: Bot Fleet Job — 500 bots × 100 orders = 50,000 orders
+                  publishes latencies to Redis Stream
+                  sends done signal when complete
+                         │
+                         ▼
+              Redis Streams (telemetry:orders)
+                         │
+                         ▼
+              Telemetry Service
+                • p50 / p90 / p99 latency
+                • real TPS (elapsed time)
+                • correctness from Redis
+                • composite score → leaderboard
+                • sandbox cleanup after scoring
+                         │
+                         ▼
+              Redis Sorted Set (leaderboard)
+              Redis Hash (leaderboard:details)
+                         │
+                         ▼
+              Leaderboard Service (:8082)
+                • SSE stream every 2s
+                         │
+                         ▼
+              Frontend (:5173)
+                • live leaderboard
+                • submission portal
+                • pipeline progress tracker
 ```
 
 ---
@@ -309,12 +316,11 @@ Frontend (:5173)
 iicpc-hackathon-platform/
 ├── mock-exchange/          # Fake contestant server for testing
 ├── backend/
-│   ├── submission-service/ # Receives uploads, spawns K8s Jobs
-│   ├── sandbox-runner/     # Runs inside K8s Job container
-│   ├── bot-fleet/          # 100 concurrent trading bots
-│   ├── telemetry-service/  # p50/p90/p99 calculator
-│   ├── leaderboard-service/ # Score API + SSE streaming
-│   └── shared/             # Common models and proto definitions
+│   ├── submission-service/  # Receives uploads, spawns K8s pipeline
+│   ├── bot-fleet/           # 500 concurrent trading bots
+│   ├── correctness-harness/ # 6 sequential correctness scenarios
+│   ├── telemetry-service/   # Scoring, leaderboard, sandbox cleanup
+│   └── leaderboard-service/ # Score API + SSE streaming
 ├── frontend/               # React leaderboard UI
 ├── k8s/                    # Kubernetes manifests
 ├── helm/                   # Helm chart for parameterized deploy

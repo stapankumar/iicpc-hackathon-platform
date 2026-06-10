@@ -49,7 +49,11 @@ and objective performance measurement.
 │  NetworkPolicy   │                    │
 └────────┬─────────┘                    │
          │                              │
-         ▼                              │
+         ▼  
+┌─────────────────────────┐
+│  Correctness Harness  │
+│  6 sequential tests   │
+│  → Redis correctness  │                            │
 ┌──────────────────┐    ┌─────────────────────────┐
 │  Bot Fleet       │    │  Telemetry Service      │
 │  100 goroutines  │───▶│  Redis Stream Consumer  │
@@ -89,30 +93,22 @@ GET  /status     → check sandbox status by submission_id
 
 ---
 
-### 4.2 Sandbox Runner
+### 4.2 Sandbox Pod
 
-**Responsibility:** Runs inside the K8s Job container. Unpacks contestant zip,
-executes their binary, performs healthcheck, signals readiness.
-
-**Isolation guarantees enforced by K8s:**
-
-```yaml
-securityContext:
-  runAsNonRoot: true
-  readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: false
-resources:
-  limits:
-    cpu: "2"
-    memory: "512Mi"
-```
-
-**NetworkPolicy:** Only bot-fleet pods can reach sandbox on port 8080.
-All egress from sandbox blocked — prevents malicious outbound calls.
+**Responsibility:** Runs the contestant's Docker image in an isolated K8s Pod. Exposes `POST /order`, `DELETE /order`, `GET /orderbook` on port 8080. Automatically cleaned up by telemetry service after scoring completes.
 
 ---
 
-### 4.3 Bot Fleet
+### 4.3 Correctness Harness
+
+**Responsibility:** Runs 6 deterministic sequential scenarios against the sandbox before load testing begins. Publishes a correctness score (0.0–1.0) to Redis.
+
+**Why sequential and not concurrent:** Price-time priority correctness cannot be verified under concurrent load — the outcome depends on arrival order which is non-deterministic across the network. Sequential isolation is the only way to define a ground truth expected outcome.
+
+**Scenarios:** basic price cross, no cross, cancel prevents fill, partial fill, market order, orderbook structure validation.
+
+
+### 4.4 Bot Fleet
 
 **Responsibility:** Simulate diverse market participants sending high-velocity
 concurrent orders to contestant's exchange.
@@ -127,7 +123,7 @@ concurrent orders to contestant's exchange.
 
 **Concurrency model:**
 
-- 100 goroutines per pod, each bot is an independent goroutine
+- 500 goroutines per pod, each bot is an independent goroutine
 - Go's M:N scheduler maps goroutines across all CPU cores
 - No shared state between bots — lock-free design
 - Measured throughput: **12,158 orders/sec** on single laptop node
@@ -143,10 +139,9 @@ enabling up to 1000 concurrent bots per test run.
 
 ---
 
-### 4.4 Telemetry Service
+### 4.5 Telemetry Service
 
-**Responsibility:** Consume latency measurements from Redis Streams,
-calculate p50/p90/p99 percentiles and TPS, persist scores.
+**Responsibility:** Consume latency measurements from Redis Streams, calculate p50/p90/p99 percentiles and real TPS (using actual elapsed time), read correctness score from Redis, compute composite score, push to leaderboard. Deletes sandbox pod and service after scoring via K8s API.
 
 **Why Redis Streams over direct write:**
 
@@ -180,7 +175,7 @@ p99 = sorted[N×0.99]   (worst-case — stress indicator)
 
 ---
 
-### 4.5 Leaderboard Service (:8082)
+### 4.6 Leaderboard Service (:8082)
 
 **Responsibility:** Serve current scores via REST and stream live updates
 via Server-Sent Events (SSE).
@@ -226,7 +221,8 @@ Consumer groups ensure exactly-once processing even if telemetry restarts.
 ```text
 Key:    leaderboard
 Score:  composite score (float64)
-Member: JSON blob {submission_id, p50, p90, p99, tps, score}
+Member: team_name (string) — one entry per team, best score kept
+Details: leaderboard:details hash — full JSON per team
 ```
 
 **Deployed as:** K8s StatefulSet with PVC for persistence across restarts.
@@ -265,6 +261,7 @@ Namespace: iicpc
 ├── Deployment:  leaderboard-service (1 replica)
 ├── Jobs:        sandbox-<submission-id> (1 per submission, TTL 300s)
 ├── Jobs:        bot-fleet-job (triggered per test run)
+├── Jobs:        correctness-<submission-id> (1 per submission, TTL 300s)
 ├── HPA:         bot-fleet (2→10 replicas)
 ├── ResourceQuota: max 50 concurrent Jobs, 20 CPU, 10Gi memory
 ├── NetworkPolicy: sandbox pods — ingress from bot-fleet only

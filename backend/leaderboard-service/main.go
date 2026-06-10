@@ -22,6 +22,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func main() {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", corsMiddleware(handlers.HandleHealth))
 	mux.HandleFunc("/scores", corsMiddleware(handlers.HandleScores))
 	mux.HandleFunc("/ws", handlers.HandleWebSocket) // SSE handles CORS internally already
 	log.Println("Leaderboard service running on :8082")

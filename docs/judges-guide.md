@@ -19,6 +19,14 @@ Minimum specs: 8GB RAM, 4 CPU cores, 20GB free disk.
 
 ## One-Time Setup
 
+Set Docker Hub credentials to avoid rate limits:
+
+```bash
+export DOCKER_USERNAME=your_dockerhub_username
+export DOCKER_PASSWORD=your_access_token
+```
+
+Get a token at: https://hub.docker.com/settings/security → New Access Token
 ```bash
 git clone <repo-url>
 cd iicpc-hackathon-platform

@@ -454,8 +454,3 @@ echo "  ── Frontend ──────────────────�
 echo "  cd frontend && npm run dev"
 echo "=============================================="
 echo ""
-
-# export DOCKER_USERNAME=yourusername
-# export DOCKER_PASSWORD=yourtoken
-# stapankumar
-# 7U;ZX=*y9U3sA!y
