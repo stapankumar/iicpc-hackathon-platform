@@ -27,45 +27,52 @@ and objective performance measurement.
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │                        INGRESS (NGINX)                      │
-│              /submit → 8081    /scores,/ws → 8082           │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          ▼                             ▼
-┌──────────────────┐         ┌──────────────────────┐
-│ Submission Svc   │         │  Leaderboard Svc     │
-│ :8081            │         │  :8082               │
-│ Go HTTP Server   │         │  SSE Stream          │
-│ K8s Job Spawner  │         │  Redis Sorted Set    │
-└────────┬─────────┘         └──────────┬───────────┘
-         │                              │
-         ▼                              │
-┌──────────────────┐                    │
-│  K8s Job         │                    │
-│  Sandbox Runner  │                    │
-│  (per submission)│                    │
-│  CPU: 2 cores    │                    │
-│  Mem: 512Mi      │                    │
-│  NetworkPolicy   │                    │
-└────────┬─────────┘                    │
-         │                              │
-         ▼  
-┌─────────────────────────┐
-│  Correctness Harness  │
-│  6 sequential tests   │
-│  → Redis correctness  │                            │
-┌──────────────────┐    ┌─────────────────────────┐
-│  Bot Fleet       │    │  Telemetry Service      │
-│  100 goroutines  │───▶│  Redis Stream Consumer  │
-│  per pod         │    │  p50/p90/p99 Calculator │
-│  HPA: 2→10 pods  │    └──────────────┬──────────┘
-└──────────────────┘                   │
-         │                             ▼
-         │                   ┌──────────────────┐
-         └──────────────────▶│  Redis           │
-          (latency metrics)  │  Streams +       │
-                             │  Sorted Set      │
-                             └──────────────────┘
+│         /submit → :8081      /scores, /ws → :8082           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+         ┌─────────────┴─────────────┐
+         ▼                           ▼
+┌─────────────────┐       ┌──────────────────────┐
+│ Submission Svc  │       │  Leaderboard Svc     │
+│ :8081           │       │  :8082               │
+│ Go HTTP Server  │       │  SSE Stream          │
+│ K8s Job Spawner │       │  Redis Sorted Set    │
+└────────┬────────┘       └──────────┬───────────┘
+         │                           │
+         ▼                           │
+┌─────────────────┐                  │
+│  Sandbox Pod    │                  │
+│  (per submission│                  │
+│  CPU: 2 cores   │                  │
+│  Mem: 512Mi     │                  │
+│  NetworkPolicy  │                  │
+└────────┬────────┘                  │
+         │                           │
+         ▼                           │
+┌─────────────────┐                  │
+│  Correctness    │                  │
+│  Harness Job    │                  │
+│  6 sequential   │                  │
+│  scenarios      │                  │
+│  → Redis score  │                  │
+└────────┬────────┘                  │
+         │                           │
+         ▼                           │
+┌─────────────────┐   ┌──────────────────────┐
+│  Bot Fleet Job  │──▶│  Telemetry Service   │
+│  500 bots       │   │  Stream Consumer     │
+│  50,000 orders  │   │  p50/p90/p99         │
+│  done signal →  │   │  Correctness + Score │
+└─────────────────┘   │  Sandbox Cleanup     │
+                      └──────────┬───────────┘
+                                 │
+                                 ▼
+                       ┌──────────────────────┐
+                       │  Redis               │
+                       │  Streams (telemetry) │
+                       │  Sorted Set (scores) │
+                       │  Hash (details)      │
+                       └──────────────────────┘
 ```
 
 ---
