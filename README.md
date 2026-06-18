@@ -343,4 +343,4 @@ iicpc-hackathon-platform/
 ---
 
 ## Team
-IICPC Summer Hackathon 2026
+Buy High Sell Low
